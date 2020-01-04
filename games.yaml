@@ -1,0 +1,111 @@
+
+---
+games:
+  - name: GoldenEye
+    times_url_suffix: /goldeneye/history
+    levels:
+      - name: Dam
+        abbreviation: Dam
+      - name: Facility
+        abbreviation: Fac
+      - name: Runway
+        abbreviation: Runway
+      - name: Surface 1
+        abbreviation: S1
+      - name: Bunker 1
+        abbreviation: B1
+      - name: Silo
+        abbreviation: Silo
+      - name: Frigate
+        abbreviation: Frig
+      - name: Surface 2
+        abbreviation: S2
+      - name: Bunker 2
+        abbreviation: B2
+      - name: Statue
+        abbreviation: Statue
+      - name: Archives
+        abbreviation: Archives
+      - name: Streets
+        abbreviation: Streets
+      - name: Depot
+        abbreviation: Depot
+      - name: Train
+        abbreviation: Train
+      - name: Jungle
+        abbreviation: Jungle
+      - name: Control
+        abbreviation: Control
+      - name: Caverns
+        abbreviation: Cavs
+      - name: Cradle
+        abbreviation: Cradle
+      - name: Aztec
+        abbreviation: Aztec
+      - name: Egypt
+        abbreviation: Egypt
+
+    difficulties:
+      - name: Agent
+        abbreviation: A
+      - name: Secret Agent
+        abbreviation: SA
+      - name: 00 Agent
+        abbreviation: 00A
+
+  - name: Perfect Dark
+    times_url_suffix: /perfect-dark/history
+    levels:
+    - name: dataDyne Central - Defection
+      abbreviation: Defection
+    - name: dataDyne Research - Investigation
+      abbreviation: Investigation
+    - name: dataDyne Central - Extraction
+      abbreviation: Extraction
+    - name: Carrington Villa - Hostage One
+      abbreviation: Villa
+    - name: Chicago - Stealth
+      abbreviation: Chicago
+    - name: G5 Building - Reconnaissance
+      abbreviation: G5
+    - name: Area 51 - Infiltration
+      abbreviation: Infiltration
+    - name: Area 51 - Rescue
+      abbreviation: Rescue
+    - name: Area 51 - Escape
+      abbreviation: Escape
+    - name: Air Base - Espionage
+      abbreviation: Air Base
+    - name: Air Force One - Antiterrorism
+      abbreviation: AFO
+    - name: Crash Site - Confrontation
+      abbreviation: Crash Site
+    - name: Pelagic II - Exploration
+      abbreviation: Pelagic II
+    - name: Deep Sea - Nullify Threat
+      abbreviation: Deep Sea
+    - name: Carrington Institute - Defense
+      abbreviation: Defense
+    - name: Attack Ship - Covert Assault
+      abbreviation: Attack Ship
+    - name: Skedar Ruins - Battle Shrine
+      abbreviation: Skedar Ruins
+    - name: Mr. Blonde's Revenge
+      abbreviation: MBR
+    - name: Maian SOS
+      abbreviation: Maian SOS
+    - name: WAR!
+      abbreviation: WAR!
+    - name: The Duel
+      abbreviation: The Duel
+
+  - difficulties:
+      - name: Agent
+        abbreviation: A
+      - name: Special Agent
+        abbreviation: SA
+      - name: Perfect Agent
+        abbreviation: PA
+        
+...
+        
