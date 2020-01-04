@@ -141,7 +141,7 @@ class Time:
         self.stage = stage
         self.date = date
         self.system = system
-        self.time = time
+        self.time = time_string
 
         self.player.times[self.stage.game].add(self)
         self.stage.times.add(self)
