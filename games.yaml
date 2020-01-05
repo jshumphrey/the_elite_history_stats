@@ -1,5 +1,3 @@
-
----
 GoldenEye:
   times_url_suffix: /goldeneye/history
   players_url: https://rankings.the-elite.net/players/goldeneye
@@ -108,5 +106,4 @@ Perfect Dark:
     abbreviation: SA
   - name: Perfect Agent
     abbreviation: PA
-
-...
+    

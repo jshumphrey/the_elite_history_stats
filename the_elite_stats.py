@@ -1,7 +1,7 @@
 #! /usr/bin/env python
-'''This scrapes every PR History page on the-elite.net, and concatenates all PR times into one table.'''
+"""This scrapes every PR History page on the-elite.net, retrieves all historical PR times, and analyzes them."""
 
-import csv, itertools, json, re, requests, time, tqdm, yaml
+import csv, itertools, re, requests, sys, time, tqdm, yaml
 import pdb # pylint: disable = unused-import
 from bs4 import BeautifulSoup
 from tqdm import tqdm
@@ -12,7 +12,7 @@ CALL_INTERVAL = 1 # Minimum time between requests (seconds)
 
 
 def request_soup(session, url):
-    '''Wraps the process of getting soup from a URL.'''
+    """Wraps the process of getting soup from a URL."""
     soup = None
     while not soup:
         try:
@@ -25,12 +25,81 @@ def request_soup(session, url):
 
 
 def bucket_sleep():
-    '''Rate-limits requests, according to CALL_INTERVAL.'''
+    """Rate-limits requests, according to CALL_INTERVAL."""
     global LAST_CALL
     current_time = time.time()
     if LAST_CALL:
         time.sleep(max(CALL_INTERVAL - (current_time - LAST_CALL), 0))
     LAST_CALL = current_time
+
+
+class Game:
+    def __init__(self, name, config_filename):
+        with open(config_filename, "r") as infile:
+            game_dict = yaml.load(infile, Loader = yaml.SafeLoader)[name]
+
+        self.name = name
+        self.times_url_suffix = game_dict["times_url_suffix"]
+        self.players_url = game_dict["players_url"]
+        self.stages = {Stage(level, difficulty, self) for level, difficulty in itertools.product(game_dict["levels"], game_dict["difficulties"])}
+
+        self.players = []
+
+    def __str__(self):
+        return self.name
+
+    def __repr__(self):
+        return "Game: name = {!r}, times_url_suffix = {!r}, players_url = {!r}, stages = {!s}, players = {!s}".format(
+            self.name, self.times_url_suffix, self.players_url, self.stages, self.players
+        )
+
+    def download_players(self, session):
+        """This creates the game's Players by visiting the All Players page and parsing the table."""
+        players_soup = request_soup(session, self.players_url)
+
+        css_url = "https://rankings.the-elite.net" + players_soup.find(href = re.compile("\/css\/users.*css")).get("href")
+        css_dict = parse_hex_code_css(request_soup(session, css_url))
+
+        rows = [row.find_all("td") for row in players_soup.find("table").find_all("tr")[1:]]
+        self.players.extend([Player(
+            row[1].text.replace("\n", ""),
+            row[0].text.replace("\n", ""),
+            css_dict[row[0].find("a").get("class")[1]],
+            self
+        ) for row in rows])
+
+    def download_times(self, session):
+        """This wraps the process of downloading all times for every player for this game."""
+        for player in tqdm(self.players, desc = "Downloading times for " + self.name + " players"):
+            player.download_times(session)
+
+    def load_players_and_times(self, filename):
+        """This creates the games Players (with their Times) by loading them from a YAML file."""
+
+    def find_stage(self, level_name, difficulty_name):
+        """This returns the Stage for this game with the provided level and difficulty names."""
+        try:
+            return [stage for stage in self.stages if stage.level.name == level_name and stage.difficulty.name == difficulty_name][0]
+        except IndexError:
+            raise LookupError("Stage " + level_name + " " + difficulty_name + " not found!")
+
+    def write_times(self):
+        """This writes all the times out to a CSV."""
+        with open(self.name.lower().replace(" ", "_") + "_times.yaml", "w") as outfile:
+            writer = csv.writer(outfile, delimiter = ",", quotechar = '"')
+            writer.writerow(["Player Name", "Player Alias", "Hex Code", "Date", "Game", "Level", "Difficulty", "Time", "System"])
+            for t in sorted(itertools.chain([player.times for player in self.players]), key = lambda t: t.date):
+                writer.writerow([
+                    t.player.real_name,
+                    t.player.alias,
+                    t.player.hex_code,
+                    t.date,
+                    t.stage.game,
+                    t.stage.level_name,
+                    t.stage.difficulty,
+                    t.time,
+                    t.system
+                ])
 
 
 class Player:
@@ -53,10 +122,11 @@ class Player:
         )
 
     def recalculate_points(self):
+        """This recalculates the Player's points value by summing up the points for each of the Player's Times."""
         self.points = sum([time.points for time in self.times])
 
-    def load_times(self, session):
-        '''This loads the Player's times with all of their PR times.'''
+    def download_times(self, session):
+        """This queries the-elite.net to load the Player's times with all of their times."""
         soup = request_soup(session, self.player_url + self.game.times_url_suffix)
         try:
             rows = [[cell.text.replace("\n", "") for cell in row.find_all("td")] for row in soup.find("table").find_all("tr")[1:]]
@@ -72,73 +142,6 @@ class Player:
         ) for row in rows if row[0] != "Unknown" and row[3] != "N/A"])
 
 
-class Game:
-    def __init__(self, name, times_url_suffix, players_url, levels, difficulties):
-        self.name = name
-        self.times_url_suffix = times_url_suffix
-        self.players_url = players_url
-        self.stages = {Stage(level, difficulty, self) for level, difficulty in itertools.product(levels, difficulties)}
-
-        self.players = []
-
-    def __str__(self):
-        return self.name
-
-    def __repr__(self):
-        return "Game: name = {!r}, times_url_suffix = {!r}, players_url = {!r}, stages = {!s}, players = {!s}".format(
-            self.name, self.times_url_suffix, self.players_url, self.stages, self.players
-        )
-
-    def load_players(self, session):
-        '''This creates the set of Players by visiting the All Players page and parsing the table.'''
-        players_soup = request_soup(session, self.players_url)
-        
-        css_url = "https://rankings.the-elite.net" + players_soup.find(href = re.compile("\/css\/users.*css")).get("href")
-        css_soup = request_soup(session, css_url)
-        css_entries = re.split(r",?a\.", css_soup.get_text())
-        
-        css_dict = {}
-        for entry in [entry for entry in css_entries if entry]:
-            entry_match = re.fullmatch(r"(u\d+)\{color:(\#[\da-fA-F]+)\}", entry)
-            if not entry_match:
-                css_dict[entry] = "#000000"
-            else:
-                css_dict[entry_match[1]] = entry_match[2]
-            
-        rows = [row.find_all("td") for row in players_soup.find("table").find_all("tr")[1:]]
-        self.players.extend([Player(
-            row[1].text.replace("\n", ""), 
-            row[0].text.replace("\n", ""),
-            css_dict[row[0].find("a").get("class")[1]],
-            self
-        ) for row in rows])
-
-    def find_stage(self, level_name, difficulty_name):
-        '''This returns the Stage for this game with the provided level and difficulty names.'''
-        try:
-            return [stage for stage in self.stages if stage.level.name == level_name and stage.difficulty.name == difficulty_name][0]
-        except IndexError:
-            raise LookupError("Stage " + level_name + " " + difficulty_name + " not found!")
-
-    def write_times(self):
-        '''This writes all the times out to a CSV.'''
-        with open("times.csv", "w") as outfile:
-            writer = csv.writer(outfile, delimiter = ",", quotechar = '"')
-            writer.writerow(["Player Name", "Player Alias", "Hex Code", "Date", "Game", "Level", "Difficulty", "Time", "System"])
-            for t in sorted(itertools.chain([player.times for player in self.players]), key = lambda t: t.date):
-                writer.writerow([
-                    t.player.real_name,
-                    t.player.alias,
-                    t.player.hex_code,
-                    t.date,
-                    t.stage.game,
-                    t.stage.level_name,
-                    t.stage.difficulty,
-                    t.time,
-                    t.system
-                ])
-
-
 class Stage:
     def __init__(self, level_dict, difficulty_dict, game):
         self.level = Level(level_dict["name"], level_dict["abbreviation"])
@@ -152,6 +155,33 @@ class Stage:
 
     def __repr__(self):
         return self.level.name + " " + self.difficulty.name
+
+    def get_times(self):
+        """This returns a list of all times for this Stage across all Players for this Stage's Game."""
+        return itertools.chain([[t for t in player.times if t.stage == self] for player in self.game.players])
+
+
+class Time:
+    def __init__(self, player, stage, date, system, time_string):
+        self.player = player
+        self.stage = stage
+        self.date = date
+        self.system = system
+        self.time = time_string
+
+        #self.stage.times.add(self)
+        self.points = 0
+
+    def __str__(self):
+        return str(self.stage) + " " + self.time
+
+    def __repr__(self):
+        return "Time: player = {!s}, stage = {!s}, date = {!s}, system = {!r}, time = {!r}".format(
+            self.player, self.stage, self.date, self.system, self.time
+        )
+
+    def calculate_points(self):
+        """This calculates the current point value of this time, given all times for this game."""
 
 
 class Level:
@@ -177,62 +207,41 @@ class Difficulty:
         return self.name
 
 
-class Time:
-    def __init__(self, player, stage, date, system, time_string):
-        self.player = player
-        self.stage = stage
-        self.date = date
-        self.system = system
-        self.time = time_string
-
-        #self.player.times[self.stage.game].add(self)
-        #self.stage.times.add(self)
-        self.points = 0
-
-    def __str__(self):
-        return str(self.stage) + " " + self.time
-
-    def __repr__(self):
-        return "Time: player = {!s}, stage = {!s}, date = {!s}, system = {!r}, time = {!r}".format(
-            self.player, self.stage, self.date, self.system, self.time
-        )
-
-    def calculate_points(self):
-        pass
-
-
 def te_date_to_iso(te_date):
-    '''Converts the date format used on times pages to YYYY-MM-DD.'''
+    """Converts the date format used on times pages to YYYY-MM-DD."""
     return datetime.strptime(te_date, "%d %b %Y").strftime("%Y-%m-%d")
 
 
-def get_hex_code(soup):
-    '''This extracts the hex code from a player's PR history page.'''
-    try:
-        return soup.find("h1").get("style")[6:]
-    except TypeError:
-        return "#000000"
+def parse_hex_code_css(css_soup):
+    """This parses the CSS soup from the-elite.net to create a dictionary mapping user IDs to hex codes."""
+    css_entries = re.split(r",?a\.", css_soup.get_text())
 
+    css_dict = {}
+    for entry in [entry for entry in css_entries if entry]:
+        entry_match = re.fullmatch(r"(u\d+)\{color:(\#[\da-fA-F]+)\}", entry)
+        if not entry_match:
+            css_dict[entry] = "#000000"
+        else:
+            css_dict[entry_match[1]] = entry_match[2]
 
-def set_up_game(config_filename, game_name):
-    with open(config_filename, "r") as infile:
-        game_dict = yaml.load(infile, Loader = yaml.SafeLoader)[game_name]
-        return Game(game_name, game_dict["times_url_suffix"], game_dict["players_url"], game_dict["levels"], game_dict["difficulties"])
+    return css_dict
 
 
 def main():
-    '''Execute top-level functionality'''
-    session = requests.Session()
+    """Execute top-level functionality."""
 
-    goldeneye = set_up_game("games.yaml", "GoldenEye")
-    perfect_dark = set_up_game("games.yaml", "Perfect Dark")
+    goldeneye = Game("GoldenEye", "games.yaml")
+    perfect_dark = Game("Perfect Dark", "games.yaml")
 
     for game in [goldeneye, perfect_dark]:
-        game.load_players(session)
-        for player in tqdm(game.players, desc = "Downloading times for " + game.name + " players"):
-            player.load_times(session)
-            pdb.set_trace()
-        game.write_times()
+        if "--download" in sys.argv: # If the "download" option is specified, query the-elite.net for all our information.
+            session = requests.Session()
+            game.download_players(session) # Download all the players for this game.
+            game.download_times(session) # Download all the times for each player.
+            game.write_times() # Write all times to an output YAML file so that we don't have to download everything each time we run.
+
+        else: # The "download" option was not specified; load the players and times from the game's YAML file.
+            pass
 
 if __name__ == "__main__":
     main()
