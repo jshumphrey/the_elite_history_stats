@@ -1,7 +1,7 @@
 #! /usr/bin/env python
 """This scrapes every PR History page on the-elite.net, retrieves all historical PR times, and analyzes them."""
 
-import csv, itertools, re, requests, sys, time, tqdm, yaml
+import itertools, re, requests, sys, time, yaml
 import pdb # pylint: disable = unused-import
 from bs4 import BeautifulSoup
 from tqdm import tqdm
@@ -73,8 +73,18 @@ class Game:
         for player in tqdm(self.players, desc = "Downloading times for " + self.name + " players"):
             player.download_times(session)
 
-    def load_players_and_times(self, filename):
+    def export_players_and_times(self, filename):
+        """This writes all the times out to a CSV."""
+        with open(filename, "w") as outfile:
+            yaml.dump([player.dict_repr() for player in self.players], outfile)
+
+    def import_players_and_times(self, filename):
         """This creates the games Players (with their Times) by loading them from a YAML file."""
+        with open(filename, "r") as infile:
+            for player_yaml in yaml.load(infile, Loader = yaml.SafeLoader):
+                player = Player(player_yaml["real_name"], player_yaml["alias"], player_yaml["hex_code"], self)
+                player.import_times(player_yaml["times"])
+                self.players.append(player)
 
     def find_stage(self, level_name, difficulty_name):
         """This returns the Stage for this game with the provided level and difficulty names."""
@@ -82,24 +92,6 @@ class Game:
             return [stage for stage in self.stages if stage.level.name == level_name and stage.difficulty.name == difficulty_name][0]
         except IndexError:
             raise LookupError("Stage " + level_name + " " + difficulty_name + " not found!")
-
-    def write_times(self):
-        """This writes all the times out to a CSV."""
-        with open(self.name.lower().replace(" ", "_") + "_times.yaml", "w") as outfile:
-            writer = csv.writer(outfile, delimiter = ",", quotechar = '"')
-            writer.writerow(["Player Name", "Player Alias", "Hex Code", "Date", "Game", "Level", "Difficulty", "Time", "System"])
-            for t in sorted(itertools.chain([player.times for player in self.players]), key = lambda t: t.date):
-                writer.writerow([
-                    t.player.real_name,
-                    t.player.alias,
-                    t.player.hex_code,
-                    t.date,
-                    t.stage.game,
-                    t.stage.level_name,
-                    t.stage.difficulty,
-                    t.time,
-                    t.system
-                ])
 
 
 class Player:
@@ -121,6 +113,15 @@ class Player:
             self.real_name, self.alias, self.hex_code, self.game, self.points
         )
 
+    def dict_repr(self):
+        """This creates a dictionary representation of this Player, enabling it to be written out to a YAML file."""
+        return {
+            "real_name": self.real_name,
+            "alias": self.alias,
+            "hex_code": self.hex_code,
+            "times": [t.dict_repr for t in self.times]
+        }
+
     def recalculate_points(self):
         """This recalculates the Player's points value by summing up the points for each of the Player's Times."""
         self.points = sum([time.points for time in self.times])
@@ -141,6 +142,49 @@ class Player:
             row[3]
         ) for row in rows if row[0] != "Unknown" and row[3] != "N/A"])
 
+    def import_times(self, times_list):
+        """This loads the Player's times from a list of time dicts, provided by the exported YAML file."""
+        self.times.extend([Time(
+            self,
+            self.game.find_stage(time_yaml["level"], time_yaml["difficulty"]),
+            time_yaml["date"],
+            time_yaml["system"],
+            time_yaml["time_string"]
+        ) for time_yaml in times_list])
+
+
+class Time:
+    def __init__(self, player, stage, date, system, time_string):
+        self.player = player
+        self.stage = stage
+        self.date = date
+        self.system = system
+        self.time_string = time_string
+
+        self.points = 0
+
+    def __str__(self):
+        return str(self.stage) + " " + self.time_string
+
+    def __repr__(self):
+        return "Time: player = {!s}, stage = {!s}, date = {!s}, system = {!r}, time_string = {!r}".format(
+            self.player, self.stage, self.date, self.system, self.time_string
+        )
+
+    def dict_repr(self):
+        """This creates a dictionary representation of this Time, enabling it to be written out to a YAML file."""
+        return {
+            "level": self.stage.level.name,
+            "difficulty": self.stage.difficulty.name,
+            "date": self.date,
+            "system": self.system,
+            "time_string": self.time_string
+        }
+
+    def calculate_points(self):
+        """This calculates the current point value of this time, given all times for this game."""
+
+
 
 class Stage:
     def __init__(self, level_dict, difficulty_dict, game):
@@ -159,29 +203,6 @@ class Stage:
     def get_times(self):
         """This returns a list of all times for this Stage across all Players for this Stage's Game."""
         return itertools.chain([[t for t in player.times if t.stage == self] for player in self.game.players])
-
-
-class Time:
-    def __init__(self, player, stage, date, system, time_string):
-        self.player = player
-        self.stage = stage
-        self.date = date
-        self.system = system
-        self.time = time_string
-
-        #self.stage.times.add(self)
-        self.points = 0
-
-    def __str__(self):
-        return str(self.stage) + " " + self.time
-
-    def __repr__(self):
-        return "Time: player = {!s}, stage = {!s}, date = {!s}, system = {!r}, time = {!r}".format(
-            self.player, self.stage, self.date, self.system, self.time
-        )
-
-    def calculate_points(self):
-        """This calculates the current point value of this time, given all times for this game."""
 
 
 class Level:
@@ -238,7 +259,7 @@ def main():
             session = requests.Session()
             game.download_players(session) # Download all the players for this game.
             game.download_times(session) # Download all the times for each player.
-            game.write_times() # Write all times to an output YAML file so that we don't have to download everything each time we run.
+            game.export_players_and_times(game.name.lower().replace(" ", "_") + "_times.yaml") # Write all times to an output YAML file so that we don't have to download everything each time we run.
 
         else: # The "download" option was not specified; load the players and times from the game's YAML file.
             pass
