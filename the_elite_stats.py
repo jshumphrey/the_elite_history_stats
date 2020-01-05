@@ -1,33 +1,56 @@
 #! /usr/bin/env python
 '''This scrapes every PR History page on the-elite.net, and concatenates all PR times into one table.'''
 
-import csv, itertools, requests, time, tqdm, yaml
+import csv, itertools, json, re, requests, time, tqdm, yaml
 import pdb # pylint: disable = unused-import
 from bs4 import BeautifulSoup
 from tqdm import tqdm
 from datetime import datetime
 
-LAST_CALL = time.time()
-CALL_INTERVAL = 15.0 # Minimum time between requests (seconds)
+LAST_CALL = None
+CALL_INTERVAL = 1 # Minimum time between requests (seconds)
+
+
+def request_soup(session, url):
+    '''Wraps the process of getting soup from a URL.'''
+    soup = None
+    while not soup:
+        try:
+            bucket_sleep()
+            soup = BeautifulSoup(session.get(url).content, features = "lxml")
+        except (ConnectionError, TimeoutError) as _:
+            pass
+
+    return soup
+
+
+def bucket_sleep():
+    '''Rate-limits requests, according to CALL_INTERVAL.'''
+    global LAST_CALL
+    current_time = time.time()
+    if LAST_CALL:
+        time.sleep(max(CALL_INTERVAL - (current_time - LAST_CALL), 0))
+    LAST_CALL = current_time
+
 
 class Player:
-    def __init__(self, real_name, alias, game):
+    def __init__(self, real_name, alias, hex_code, game):
         self.real_name = real_name
         self.alias = alias
+        self.hex_code = hex_code
         self.game = game
 
         self.times = []
-
-        self.hex_code = None
-        self.times = {}
         self.player_url = "https://rankings.the-elite.net/~" + alias.replace(" ", "+")
-        self.points = {}
+        self.points = 0
 
     def __str__(self):
         return self.real_name + " / " + self.alias
 
     def __repr__(self):
-        return self.real_name + " / " + self.alias
+        return "Player: real_name = {!r}, alias = {!r}, hex_code = {!r}, game = {!s}, points = {!r}".format(
+            self.real_name, self.alias, self.hex_code, self.game, self.points
+        )
 
     def recalculate_points(self):
         self.points = sum([time.points for time in self.times])
@@ -62,14 +85,33 @@ class Game:
         return self.name
 
     def __repr__(self):
-        return self.name + ": stages = " + [repr(stage) for stage in self.stages]
+        return "Game: name = {!r}, times_url_suffix = {!r}, players_url = {!r}, stages = {!s}, players = {!s}".format(
+            self.name, self.times_url_suffix, self.players_url, self.stages, self.players
+        )
 
     def load_players(self, session):
         '''This creates the set of Players by visiting the All Players page and parsing the table.'''
-        table = request_soup(session, self.players_url).find("table")
-        pdb.set_trace()
-        rows = [[cell.text.replace("\n", "") for cell in row.find_all("td")] for row in table.find_all("tr")[1:]]
-        self.players.extend([Player(row[1], row[0], self) for row in rows])
+        players_soup = request_soup(session, self.players_url)
+        
+        css_url = "https://rankings.the-elite.net" + players_soup.find(href = re.compile("\/css\/users.*css")).get("href")
+        css_soup = request_soup(session, css_url)
+        css_entries = re.split(r",?a\.", css_soup.get_text())
+        
+        css_dict = {}
+        for entry in [entry for entry in css_entries if entry]:
+            entry_match = re.fullmatch(r"(u\d+)\{color:(\#[\da-fA-F]+)\}", entry)
+            if not entry_match:
+                css_dict[entry] = "#000000"
+            else:
+                css_dict[entry_match[1]] = entry_match[2]
+            
+        rows = [row.find_all("td") for row in players_soup.find("table").find_all("tr")[1:]]
+        self.players.extend([Player(
+            row[1].text.replace("\n", ""), 
+            row[0].text.replace("\n", ""),
+            css_dict[row[0].find("a").get("class")[1]],
+            self
+        ) for row in rows])
 
     def find_stage(self, level_name, difficulty_name):
         '''This returns the Stage for this game with the provided level and difficulty names.'''
@@ -143,38 +185,20 @@ class Time:
         self.system = system
         self.time = time_string
 
-        self.player.times[self.stage.game].add(self)
-        self.stage.times.add(self)
+        #self.player.times[self.stage.game].add(self)
+        #self.stage.times.add(self)
         self.points = 0
 
     def __str__(self):
-        return str(self.player) + ": " + str(self.stage) + " " + self.time
+        return str(self.stage) + " " + self.time
 
     def __repr__(self):
-        return str(self.player) + ": " + str(self.stage) + " " + self.time
+        return "Time: player = {!s}, stage = {!s}, date = {!s}, system = {!r}, time = {!r}".format(
+            self.player, self.stage, self.date, self.system, self.time
+        )
 
     def calculate_points(self):
         pass
-
-
-def request_soup(session, url):
-    '''Wraps the process of getting soup from a URL.'''
-    soup = None
-    while not soup:
-        try:
-            bucket_sleep()
-            soup = BeautifulSoup(session.get(url).content, features = "lxml")
-        except (ConnectionError, TimeoutError) as _:
-            pass
-
-    return soup
-
-
-def bucket_sleep():
-    '''Rate-limits requests, according to CALL_INTERVAL.'''
-    global LAST_CALL
-    time.sleep(max(CALL_INTERVAL - (time.time() - LAST_CALL), 0))
-    LAST_CALL = time.time()
 
 
 def te_date_to_iso(te_date):
@@ -192,8 +216,8 @@ def get_hex_code(soup):
 
 def set_up_game(config_filename, game_name):
     with open(config_filename, "r") as infile:
-        game_yaml = [game for game in yaml.load(infile)["games"] if game["name"] == game_name][0]
-        return Game(game_name, game_yaml["times_url_suffix"], game_yaml["players_page"], game_yaml["levels"], game_yaml["difficulties"])
+        game_dict = yaml.load(infile, Loader = yaml.SafeLoader)[game_name]
+        return Game(game_name, game_dict["times_url_suffix"], game_dict["players_url"], game_dict["levels"], game_dict["difficulties"])
 
 
 def main():
@@ -207,6 +231,7 @@ def main():
         game.load_players(session)
         for player in tqdm(game.players, desc = "Downloading times for " + game.name + " players"):
             player.load_times(session)
+            pdb.set_trace()
         game.write_times()
 
 if __name__ == "__main__":
