@@ -8,7 +8,10 @@ from tqdm import tqdm
 from datetime import datetime
 
 LAST_CALL = None
-CALL_INTERVAL = 1 # Minimum time between requests (seconds)
+if "--debug" in sys.argv:
+    CALL_INTERVAL = 1 # Minimum time between requests (seconds)
+else:
+    CALL_INTERVAL = 10 # Minimum time between requests (seconds)
 
 
 def request_soup(session, url):
@@ -70,7 +73,7 @@ class Game:
 
     def download_times(self, session):
         """This wraps the process of downloading all times for every player for this game."""
-        for player in tqdm(self.players, desc = "Downloading times for " + self.name + " players"):
+        for player in tqdm(self.players[:10] if "--debug" in sys.argv else self.players, desc = "Downloading times for " + self.name + " players"):
             player.download_times(session)
 
     def export_players_and_times(self, filename):
@@ -119,7 +122,7 @@ class Player:
             "real_name": self.real_name,
             "alias": self.alias,
             "hex_code": self.hex_code,
-            "times": [t.dict_repr for t in self.times]
+            "times": [t.dict_repr() for t in self.times]
         }
 
     def recalculate_points(self):
@@ -262,7 +265,9 @@ def main():
             game.export_players_and_times(game.name.lower().replace(" ", "_") + "_times.yaml") # Write all times to an output YAML file so that we don't have to download everything each time we run.
 
         else: # The "download" option was not specified; load the players and times from the game's YAML file.
-            pass
+            game.import_players_and_times(game.name.lower().replace(" ", "_") + "_times.yaml")
+            pdb.set_trace()
+            foo
 
 if __name__ == "__main__":
     main()
